@@ -1,0 +1,56 @@
+name: "Run Terraform"
+description: "Used to run all the terraform commands to test or deploy."
+inputs:
+  tf-version:
+    description: "Terraform version number"
+    required: true
+    default: 1.1.9
+  dry-run:
+    description: "Is it a DRY-RUN ?"
+    default: false
+  tf-root:
+    description: "Root directory for terraform."
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v1
+      with:
+        terraform_version: ${{ inputs.tf-version }}
+      - run: |
+          cd terraform/${{ matrix.steps }}
+          terraform init -no-color       
+      - id: plan
+        continue-on-error: true
+        run: |
+          cd terraform/${{ matrix.steps }}
+          terraform plan -input=false -no-color -refresh=true -detailed-exitcode -out=terraform.plan 2>&1 | tee terraform.plan.ansi
+      - run: echo "${{ matrix.steps }} - $(cat terraform/${{ matrix.steps }}/terraform.plan.ansi | grep Plan)" > terraform.plan.summary
+        if: steps.plan.outputs.exitcode == 2
+      - run: echo "${{ matrix.steps }} - No changes!" > terraform.plan.summary
+        if: steps.plan.outputs.exitcode == 0
+      - run: echo "${{ matrix.steps }} - Errors / warnings!" > terraform.plan.summary
+        if: steps.plan.outputs.exitcode == 1
+      - name: 'Upload Artifact'
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.steps }}_terraform.plan.summary
+          path: terraform.plan.summary
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.steps }}_terraform.plan
+          path: terraform/${{ matrix.steps }}/terraform.plan.ansi
+      - if: steps.plan.outputs.exitcode == 1
+        run: echo "Terraform plan failed, check artifacts." && exit 1
+      - run: |
+          cd terraform/${{ matrix.steps }}
+          terraform show -no-color -json > tf_show.json
+          cat tf_output.json
+          cat tf_show.json
+          ls -la
+        continue-on-error: true
+      - if: steps.plan.outputs.exitcode == 2
+        run: |
+          cd terraform/${{ matrix.steps }}
+          terraform apply -no-color -auto-approve=true terraform.plan
